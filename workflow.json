@@ -1,0 +1,42 @@
+{
+  "nodes": [
+    {
+      "id": "input_node",
+      "type": "Input",
+      "label": "User Input",
+      "nodeCategory": "input"
+    },
+    {
+      "id": "auto_reply_agent",
+      "type": "Agent",
+      "label": "Message Auto-Reply Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "flagged_assistant_agent",
+      "type": "Agent",
+      "label": "Flagged Message Assistant Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "output_node",
+      "type": "Output",
+      "label": "Output",
+      "nodeCategory": "end"
+    }
+  ],
+  "edges": [
+    {
+      "source": "input_node",
+      "target": "auto_reply_agent"
+    },
+    {
+      "source": "auto_reply_agent",
+      "target": "flagged_assistant_agent"
+    },
+    {
+      "source": "flagged_assistant_agent",
+      "target": "output_node"
+    }
+  ]
+}

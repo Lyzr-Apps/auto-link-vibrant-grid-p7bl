@@ -1,0 +1,35 @@
+{
+  "agents": [
+    {
+      "agent_id": "69996017746ef9435cac7ed5",
+      "name": "Message Auto-Reply Agent",
+      "node_id": "auto_reply_agent",
+      "provider": "openai",
+      "model": "gpt-4.1",
+      "temperature": 0.5,
+      "top_p": 0.95,
+      "has_image_output": false,
+      "has_voice": false,
+      "has_file_output": false,
+      "has_knowledge_base": false,
+      "has_schedule": false,
+      "response_schema_file": "response_schemas/message_auto_reply_agent_response.json"
+    },
+    {
+      "agent_id": "69996017c066ed107671abdc",
+      "name": "Flagged Message Assistant Agent",
+      "node_id": "flagged_assistant_agent",
+      "provider": "openai",
+      "model": "gpt-4.1",
+      "temperature": 0.5,
+      "top_p": 0.95,
+      "has_image_output": false,
+      "has_voice": false,
+      "has_file_output": false,
+      "has_knowledge_base": false,
+      "has_schedule": false,
+      "response_schema_file": "response_schemas/flagged_message_assistant_agent_response.json"
+    }
+  ],
+  "workflow_file": "workflow.json"
+}

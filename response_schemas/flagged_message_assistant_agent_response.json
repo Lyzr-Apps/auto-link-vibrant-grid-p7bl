@@ -1,0 +1,32 @@
+{
+  "agent_name": "Flagged Message Assistant Agent",
+  "agent_id": "69996017c066ed107671abdc",
+  "description": "Reviews flagged/sensitive messages selected by the user, generates a suggested reply draft based on message context and user profile, and presents it for user editing and approval before sending",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "result": {
+      "suggested_reply": "string",
+      "reply_tone": "string",
+      "context_analysis": "string",
+      "category": "string",
+      "confidence": "number",
+      "alternative_actions": [
+        "string"
+      ]
+    }
+  },
+  "example_response": {
+    "result": {
+      "suggested_reply": "sample string",
+      "reply_tone": "sample string",
+      "context_analysis": "sample string",
+      "category": "sample string",
+      "confidence": 0,
+      "alternative_actions": [
+        "sample string"
+      ]
+    }
+  }
+}

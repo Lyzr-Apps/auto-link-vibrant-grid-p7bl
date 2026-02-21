@@ -1,0 +1,84 @@
+{
+  "agent_name": "Message Auto-Reply Agent",
+  "agent_id": "69996017746ef9435cac7ed5",
+  "description": "Fetches unread LinkedIn messages via custom API, categorizes each message (greeting, job offer, collaboration, sales, spam, follow-up, general), generates personalized human-like replies following tone-matching and reply rules, sends replies for non-flagged messages, and flags sensitive/spam messages for review",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "result": {
+      "summary": {
+        "total_processed": "number",
+        "auto_replied": "number",
+        "flagged": "number"
+      },
+      "auto_replies": [
+        {
+          "sender_name": "string",
+          "sender_title": "string",
+          "category": "string",
+          "original_message": "string",
+          "generated_reply": "string",
+          "timestamp": "string"
+        }
+      ],
+      "flagged_messages": [
+        {
+          "sender_name": "string",
+          "sender_title": "string",
+          "category": "string",
+          "original_message": "string",
+          "flag_reason": "string",
+          "priority": "string",
+          "timestamp": "string"
+        }
+      ],
+      "activity_feed": [
+        {
+          "action": "string",
+          "sender_name": "string",
+          "category": "string",
+          "timestamp": "string"
+        }
+      ]
+    }
+  },
+  "example_response": {
+    "result": {
+      "summary": {
+        "total_processed": 0,
+        "auto_replied": 0,
+        "flagged": 0
+      },
+      "auto_replies": [
+        {
+          "sender_name": "sample string",
+          "sender_title": "sample string",
+          "category": "sample string",
+          "original_message": "sample string",
+          "generated_reply": "sample string",
+          "timestamp": "sample string"
+        }
+      ],
+      "flagged_messages": [
+        {
+          "sender_name": "sample string",
+          "sender_title": "sample string",
+          "category": "sample string",
+          "original_message": "sample string",
+          "flag_reason": "sample string",
+          "priority": "sample string",
+          "timestamp": "sample string"
+        }
+      ],
+      "activity_feed": [
+        {
+          "action": "sample string",
+          "sender_name": "sample string",
+          "category": "sample string",
+          "timestamp": "sample string"
+        }
+      ]
+    }
+  }
+}

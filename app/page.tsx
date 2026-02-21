@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { callAIAgent } from '@/lib/aiAgent'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -55,7 +55,9 @@ import {
   RiErrorWarningLine,
   RiRadarLine,
   RiMessage2Line,
-  RiPulseLine
+  RiPulseLine,
+  RiLink,
+  RiLinkUnlink
 } from 'react-icons/ri'
 
 // ---- Types ----
@@ -123,8 +125,22 @@ interface Settings {
 }
 
 type PageType = 'dashboard' | 'review' | 'history' | 'settings'
+type ConnectionStatus = 'connected' | 'checking' | 'disconnected' | 'reconnecting'
+
+interface ConnectionState {
+  status: ConnectionStatus
+  lastChecked: Date | null
+  latency: number | null
+  consecutiveFailures: number
+  uptime: number
+  lastSuccessful: Date | null
+}
 
 // ---- Constants ----
+
+const CONNECTION_CHECK_INTERVAL = 30000 // 30 seconds
+const CONNECTION_TIMEOUT = 15000 // 15 seconds for health check
+const MAX_FAILURES_BEFORE_DISCONNECT = 2
 
 const AGENT_SCAN_ID = '69996017746ef9435cac7ed5'
 const AGENT_DRAFT_ID = '69996017c066ed107671abdc'
@@ -275,6 +291,280 @@ function formatInline(text: string) {
   )
 }
 
+// ---- Real-Time Connection Hook ----
+
+function useLinkedInConnection() {
+  const [connectionState, setConnectionState] = useState<ConnectionState>({
+    status: 'checking',
+    lastChecked: null,
+    latency: null,
+    consecutiveFailures: 0,
+    uptime: 0,
+    lastSuccessful: null,
+  })
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const uptimeStartRef = useRef<Date>(new Date())
+  const mountedRef = useRef(true)
+
+  const checkConnection = useCallback(async () => {
+    if (!mountedRef.current) return
+
+    const startTime = Date.now()
+    setConnectionState((prev) => ({
+      ...prev,
+      status: prev.status === 'disconnected' ? 'reconnecting' : prev.consecutiveFailures === 0 ? prev.status : 'checking',
+    }))
+
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), CONNECTION_TIMEOUT)
+
+      const result = await callAIAgent(
+        'Connection health check: respond with status OK',
+        AGENT_SCAN_ID
+      )
+
+      clearTimeout(timeoutId)
+
+      if (!mountedRef.current) return
+
+      const latency = Date.now() - startTime
+      const now = new Date()
+
+      if (result.success || result.response?.status === 'success') {
+        setConnectionState((prev) => ({
+          status: 'connected',
+          lastChecked: now,
+          latency,
+          consecutiveFailures: 0,
+          uptime: Math.floor((now.getTime() - uptimeStartRef.current.getTime()) / 1000),
+          lastSuccessful: now,
+        }))
+      } else {
+        setConnectionState((prev) => {
+          const failures = prev.consecutiveFailures + 1
+          return {
+            ...prev,
+            status: failures >= MAX_FAILURES_BEFORE_DISCONNECT ? 'disconnected' : 'checking',
+            lastChecked: now,
+            latency,
+            consecutiveFailures: failures,
+            uptime: Math.floor((now.getTime() - uptimeStartRef.current.getTime()) / 1000),
+          }
+        })
+      }
+    } catch (error) {
+      if (!mountedRef.current) return
+      const now = new Date()
+      setConnectionState((prev) => {
+        const failures = prev.consecutiveFailures + 1
+        return {
+          ...prev,
+          status: failures >= MAX_FAILURES_BEFORE_DISCONNECT ? 'disconnected' : 'checking',
+          lastChecked: now,
+          latency: null,
+          consecutiveFailures: failures,
+          uptime: Math.floor((now.getTime() - uptimeStartRef.current.getTime()) / 1000),
+        }
+      })
+    }
+  }, [])
+
+  const manualReconnect = useCallback(() => {
+    setConnectionState((prev) => ({
+      ...prev,
+      status: 'reconnecting',
+      consecutiveFailures: 0,
+    }))
+    checkConnection()
+  }, [checkConnection])
+
+  useEffect(() => {
+    mountedRef.current = true
+    uptimeStartRef.current = new Date()
+
+    // Initial check after short delay
+    const initialTimeout = setTimeout(() => {
+      checkConnection()
+    }, 1500)
+
+    // Periodic checks
+    intervalRef.current = setInterval(() => {
+      checkConnection()
+    }, CONNECTION_CHECK_INTERVAL)
+
+    return () => {
+      mountedRef.current = false
+      clearTimeout(initialTimeout)
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    }
+  }, [checkConnection])
+
+  return { connectionState, manualReconnect }
+}
+
+// ---- Connection Status Indicator (Header) ----
+
+function ConnectionIndicator({
+  connectionState,
+  onReconnect,
+}: {
+  connectionState: ConnectionState
+  onReconnect: () => void
+}) {
+  const [showDetails, setShowDetails] = useState(false)
+
+  const statusConfig: Record<ConnectionStatus, { dot: string; bg: string; text: string; label: string; animate: boolean }> = {
+    connected: {
+      dot: 'bg-emerald-500',
+      bg: 'bg-emerald-50 border-emerald-200',
+      text: 'text-emerald-700',
+      label: 'Connected',
+      animate: false,
+    },
+    checking: {
+      dot: 'bg-amber-400',
+      bg: 'bg-amber-50 border-amber-200',
+      text: 'text-amber-700',
+      label: 'Checking...',
+      animate: true,
+    },
+    disconnected: {
+      dot: 'bg-red-500',
+      bg: 'bg-red-50 border-red-200',
+      text: 'text-red-700',
+      label: 'Disconnected',
+      animate: false,
+    },
+    reconnecting: {
+      dot: 'bg-blue-400',
+      bg: 'bg-blue-50 border-blue-200',
+      text: 'text-blue-700',
+      label: 'Reconnecting...',
+      animate: true,
+    },
+  }
+
+  const config = statusConfig[connectionState.status]
+
+  const formatTime = (date: Date | null) => {
+    if (!date) return 'Never'
+    const now = new Date()
+    const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000)
+    if (diffSec < 5) return 'Just now'
+    if (diffSec < 60) return `${diffSec}s ago`
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
+    return `${Math.floor(diffSec / 3600)}h ago`
+  }
+
+  const formatUptime = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+    const h = Math.floor(seconds / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    return `${h}h ${m}m`
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShowDetails(!showDetails)}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all duration-300 hover:shadow-sm ${config.bg}`}
+      >
+        <div className="relative flex items-center justify-center w-3 h-3">
+          <div className={`w-2 h-2 rounded-full ${config.dot} ${config.animate ? 'animate-pulse' : ''}`} />
+          {connectionState.status === 'connected' && (
+            <div className="absolute inset-0 w-3 h-3 rounded-full bg-emerald-400 opacity-30 animate-ping" />
+          )}
+        </div>
+        <span className={`text-xs font-medium ${config.text}`}>{config.label}</span>
+        {connectionState.latency !== null && connectionState.status === 'connected' && (
+          <span className="text-[10px] text-emerald-500 font-mono">{connectionState.latency}ms</span>
+        )}
+        <RiLinkedinBoxFill className={`w-3.5 h-3.5 ${config.text}`} />
+      </button>
+
+      {showDetails && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShowDetails(false)} />
+          <div className="absolute right-0 top-full mt-2 w-72 z-50 rounded-xl border border-border bg-white shadow-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <RiLinkedinBoxFill className="w-5 h-5 text-[#0A66C2]" />
+                <span className="text-sm font-semibold text-foreground">LinkedIn Connection</span>
+              </div>
+              <button onClick={() => setShowDetails(false)} className="p-1 rounded-md hover:bg-accent">
+                <RiCloseLine className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${config.bg}`}>
+              <div className={`w-2.5 h-2.5 rounded-full ${config.dot} ${config.animate ? 'animate-pulse' : ''}`} />
+              <span className={`text-sm font-medium ${config.text}`}>{config.label}</span>
+              {connectionState.status === 'connected' && (
+                <RiLink className="w-4 h-4 text-emerald-600 ml-auto" />
+              )}
+              {connectionState.status === 'disconnected' && (
+                <RiLinkUnlink className="w-4 h-4 text-red-500 ml-auto" />
+              )}
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                <span className="text-muted-foreground">Last Checked</span>
+                <span className="text-foreground font-medium">{formatTime(connectionState.lastChecked)}</span>
+              </div>
+              <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                <span className="text-muted-foreground">Last Successful</span>
+                <span className="text-foreground font-medium">{formatTime(connectionState.lastSuccessful)}</span>
+              </div>
+              {connectionState.latency !== null && (
+                <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                  <span className="text-muted-foreground">Response Latency</span>
+                  <span className="text-foreground font-mono font-medium">{connectionState.latency}ms</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                <span className="text-muted-foreground">Session Uptime</span>
+                <span className="text-foreground font-medium">{formatUptime(connectionState.uptime)}</span>
+              </div>
+              {connectionState.consecutiveFailures > 0 && (
+                <div className="flex items-center justify-between py-1.5 border-b border-border/50">
+                  <span className="text-muted-foreground">Failed Checks</span>
+                  <span className="text-red-600 font-medium">{connectionState.consecutiveFailures}</span>
+                </div>
+              )}
+            </div>
+
+            {connectionState.status === 'disconnected' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); onReconnect() }}
+                className="w-full text-xs"
+              >
+                <RiRefreshLine className="w-3.5 h-3.5 mr-1.5" />
+                Reconnect Now
+              </Button>
+            )}
+
+            {connectionState.status === 'connected' && (
+              <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-emerald-50 text-emerald-700">
+                <RiCheckboxCircleLine className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="text-[11px]">Agent is active and processing messages</span>
+              </div>
+            )}
+
+            <p className="text-[10px] text-muted-foreground text-center">Auto-checks every 30 seconds</p>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ---- Error Boundary ----
 
 class ErrorBoundary extends React.Component<
@@ -364,12 +654,14 @@ function Sidebar({
   collapsed,
   onToggle,
   flaggedCount,
+  connectionStatus,
 }: {
   currentPage: PageType
   onNavigate: (page: PageType) => void
   collapsed: boolean
   onToggle: () => void
   flaggedCount: number
+  connectionStatus: ConnectionStatus
 }) {
   const items: { key: PageType; label: string; icon: React.ReactNode; badge?: number }[] = [
     { key: 'dashboard', label: 'Dashboard', icon: <RiDashboardLine className="w-5 h-5" /> },
@@ -417,8 +709,23 @@ function Sidebar({
       </nav>
       <div className="px-3 py-4 border-t border-border">
         <div className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`}>
-          <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
-          {!collapsed && <span className="text-xs text-muted-foreground">LinkedIn Connected</span>}
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+            connectionStatus === 'connected' ? 'bg-emerald-500' :
+            connectionStatus === 'checking' || connectionStatus === 'reconnecting' ? 'bg-amber-400 animate-pulse' :
+            'bg-red-500'
+          }`} />
+          {!collapsed && (
+            <span className={`text-xs ${
+              connectionStatus === 'connected' ? 'text-muted-foreground' :
+              connectionStatus === 'disconnected' ? 'text-red-600' :
+              'text-amber-600'
+            }`}>
+              {connectionStatus === 'connected' ? 'LinkedIn Connected' :
+               connectionStatus === 'checking' ? 'Checking...' :
+               connectionStatus === 'reconnecting' ? 'Reconnecting...' :
+               'Disconnected'}
+            </span>
+          )}
         </div>
       </div>
     </aside>
@@ -427,15 +734,22 @@ function Sidebar({
 
 // ---- Top Header ----
 
-function TopHeader({ settings, collapsed }: { settings: Settings; collapsed: boolean }) {
+function TopHeader({
+  settings,
+  collapsed,
+  connectionState,
+  onReconnect,
+}: {
+  settings: Settings
+  collapsed: boolean
+  connectionState: ConnectionState
+  onReconnect: () => void
+}) {
   return (
     <header className={`fixed top-0 right-0 h-16 z-30 flex items-center justify-between px-6 border-b border-border bg-white/80 backdrop-blur-[16px] transition-all duration-300 ${collapsed ? 'left-16' : 'left-60'}`}>
       <h1 className="text-lg font-semibold text-foreground font-sans">AutoTask LinkedIn Reply</h1>
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200">
-          <div className="w-2 h-2 rounded-full bg-emerald-500" />
-          <span className="text-xs font-medium text-emerald-700">Connected</span>
-        </div>
+        <ConnectionIndicator connectionState={connectionState} onReconnect={onReconnect} />
         <Avatar className="w-8 h-8">
           <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
             {settings.name ? getInitials(settings.name) : 'U'}
@@ -456,6 +770,7 @@ function DashboardScreen({
   statusMessage,
   onDismissStatus,
   sampleMode,
+  connectionStatus,
 }: {
   stats: Stats
   activityFeed: ActivityItem[]
@@ -464,6 +779,7 @@ function DashboardScreen({
   statusMessage: { message: string; type: 'success' | 'error' | 'info' } | null
   onDismissStatus: () => void
   sampleMode: boolean
+  connectionStatus: ConnectionStatus
 }) {
   const displayStats = sampleMode ? { totalMessages: 47, autoReplied: 32, flagged: 8, pending: 7 } : stats
   const displayFeed = sampleMode ? SAMPLE_ACTIVITY : activityFeed
@@ -563,14 +879,37 @@ function DashboardScreen({
         </div>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
-            <div className={`w-2 h-2 rounded-full ${isScanning ? 'bg-amber-400 animate-pulse' : 'bg-emerald-500'}`} />
+            <div className={`w-2 h-2 rounded-full ${
+              isScanning ? 'bg-amber-400 animate-pulse' :
+              connectionStatus === 'connected' ? 'bg-emerald-500' :
+              connectionStatus === 'disconnected' ? 'bg-red-500' :
+              'bg-amber-400 animate-pulse'
+            }`} />
             <span className="text-xs font-medium text-foreground">Message Auto-Reply Agent</span>
-            <span className="text-[10px] text-muted-foreground ml-auto">{isScanning ? 'Processing' : 'Ready'}</span>
+            <span className={`text-[10px] ml-auto ${
+              isScanning ? 'text-amber-600' :
+              connectionStatus === 'connected' ? 'text-muted-foreground' :
+              connectionStatus === 'disconnected' ? 'text-red-600' : 'text-amber-600'
+            }`}>
+              {isScanning ? 'Processing' :
+               connectionStatus === 'connected' ? 'Ready' :
+               connectionStatus === 'disconnected' ? 'Offline' : 'Checking'}
+            </span>
           </div>
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50">
-            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+            <div className={`w-2 h-2 rounded-full ${
+              connectionStatus === 'connected' ? 'bg-emerald-500' :
+              connectionStatus === 'disconnected' ? 'bg-red-500' :
+              'bg-amber-400 animate-pulse'
+            }`} />
             <span className="text-xs font-medium text-foreground">Flagged Message Assistant</span>
-            <span className="text-[10px] text-muted-foreground ml-auto">Ready</span>
+            <span className={`text-[10px] ml-auto ${
+              connectionStatus === 'connected' ? 'text-muted-foreground' :
+              connectionStatus === 'disconnected' ? 'text-red-600' : 'text-amber-600'
+            }`}>
+              {connectionStatus === 'connected' ? 'Ready' :
+               connectionStatus === 'disconnected' ? 'Offline' : 'Checking'}
+            </span>
           </div>
         </div>
       </GlassCard>
@@ -962,12 +1301,16 @@ function SettingsScreen({
   onSave,
   statusMessage,
   onDismissStatus,
+  connectionState,
+  onReconnect,
 }: {
   settings: Settings
   onUpdateSettings: (updates: Partial<Settings>) => void
   onSave: () => void
   statusMessage: { message: string; type: 'success' | 'error' | 'info' } | null
   onDismissStatus: () => void
+  connectionState: ConnectionState
+  onReconnect: () => void
 }) {
   const [skillInput, setSkillInput] = useState('')
 
@@ -1149,15 +1492,84 @@ function SettingsScreen({
             <RiLinkedinBoxFill className="w-4 h-4 text-[#0A66C2]" />
             <h3 className="font-semibold text-sm text-foreground">LinkedIn Connection</h3>
           </div>
+          <p className="text-xs text-muted-foreground mt-1">Real-time connection status with your LinkedIn account</p>
         </div>
-        <div className="p-5">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 border border-emerald-200">
-              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-              <span className="text-sm font-medium text-emerald-700">Connected</span>
+        <div className="p-5 space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border ${
+              connectionState.status === 'connected' ? 'bg-emerald-50 border-emerald-200' :
+              connectionState.status === 'disconnected' ? 'bg-red-50 border-red-200' :
+              'bg-amber-50 border-amber-200'
+            }`}>
+              <div className={`w-2.5 h-2.5 rounded-full ${
+                connectionState.status === 'connected' ? 'bg-emerald-500' :
+                connectionState.status === 'disconnected' ? 'bg-red-500' :
+                'bg-amber-400 animate-pulse'
+              }`} />
+              <span className={`text-sm font-medium ${
+                connectionState.status === 'connected' ? 'text-emerald-700' :
+                connectionState.status === 'disconnected' ? 'text-red-700' :
+                'text-amber-700'
+              }`}>
+                {connectionState.status === 'connected' ? 'Connected' :
+                 connectionState.status === 'disconnected' ? 'Disconnected' :
+                 connectionState.status === 'reconnecting' ? 'Reconnecting...' :
+                 'Checking...'}
+              </span>
             </div>
-            <span className="text-xs text-muted-foreground">Your LinkedIn account is connected and active</span>
+            <span className="text-xs text-muted-foreground">
+              {connectionState.status === 'connected'
+                ? 'Your LinkedIn account is connected and active'
+                : connectionState.status === 'disconnected'
+                ? 'Connection lost. Click reconnect to try again.'
+                : 'Verifying connection status...'}
+            </span>
           </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="px-3 py-2.5 rounded-lg bg-secondary/50 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Status</p>
+              <p className={`text-xs font-semibold ${
+                connectionState.status === 'connected' ? 'text-emerald-600' :
+                connectionState.status === 'disconnected' ? 'text-red-600' :
+                'text-amber-600'
+              }`}>
+                {connectionState.status === 'connected' ? 'Active' :
+                 connectionState.status === 'disconnected' ? 'Offline' : 'Pending'}
+              </p>
+            </div>
+            <div className="px-3 py-2.5 rounded-lg bg-secondary/50 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Latency</p>
+              <p className="text-xs font-semibold text-foreground font-mono">
+                {connectionState.latency !== null ? `${connectionState.latency}ms` : '--'}
+              </p>
+            </div>
+            <div className="px-3 py-2.5 rounded-lg bg-secondary/50 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Last Check</p>
+              <p className="text-xs font-semibold text-foreground">
+                {connectionState.lastChecked
+                  ? connectionState.lastChecked.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                  : '--'}
+              </p>
+            </div>
+            <div className="px-3 py-2.5 rounded-lg bg-secondary/50 text-center">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Uptime</p>
+              <p className="text-xs font-semibold text-foreground">
+                {connectionState.uptime > 0 ? (
+                  connectionState.uptime < 60 ? `${connectionState.uptime}s` :
+                  connectionState.uptime < 3600 ? `${Math.floor(connectionState.uptime / 60)}m` :
+                  `${Math.floor(connectionState.uptime / 3600)}h ${Math.floor((connectionState.uptime % 3600) / 60)}m`
+                ) : '--'}
+              </p>
+            </div>
+          </div>
+
+          {connectionState.status === 'disconnected' && (
+            <Button variant="outline" size="sm" onClick={onReconnect} className="gap-2">
+              <RiRefreshLine className="w-4 h-4" />
+              Reconnect
+            </Button>
+          )}
         </div>
       </GlassCard>
 
@@ -1190,6 +1602,9 @@ export default function Page() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
 
   const [statusMessage, setStatusMessage] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+
+  // Real-time LinkedIn connection monitoring
+  const { connectionState, manualReconnect } = useLinkedInConnection()
 
   // Load settings from localStorage on mount
   useEffect(() => {
@@ -1407,6 +1822,7 @@ Please generate a suggested reply for this flagged LinkedIn message. Tone prefer
             statusMessage={statusMessage}
             onDismissStatus={dismissStatus}
             sampleMode={sampleMode}
+            connectionStatus={connectionState.status}
           />
         )
       case 'review':
@@ -1442,6 +1858,8 @@ Please generate a suggested reply for this flagged LinkedIn message. Tone prefer
             onSave={saveSettings}
             statusMessage={statusMessage}
             onDismissStatus={dismissStatus}
+            connectionState={connectionState}
+            onReconnect={manualReconnect}
           />
         )
       default:
@@ -1458,8 +1876,14 @@ Please generate a suggested reply for this flagged LinkedIn message. Tone prefer
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed((p) => !p)}
           flaggedCount={sampleMode ? SAMPLE_FLAGGED.length : flaggedMessages.length}
+          connectionStatus={connectionState.status}
         />
-        <TopHeader settings={settings} collapsed={sidebarCollapsed} />
+        <TopHeader
+          settings={settings}
+          collapsed={sidebarCollapsed}
+          connectionState={connectionState}
+          onReconnect={manualReconnect}
+        />
 
         <main className={`pt-16 min-h-screen transition-all duration-300 ${sidebarCollapsed ? 'ml-16' : 'ml-60'}`}>
           <div className="p-6 max-w-6xl mx-auto">

@@ -57,7 +57,11 @@ import {
   RiMessage2Line,
   RiPulseLine,
   RiLink,
-  RiLinkUnlink
+  RiLinkUnlink,
+  RiPlayCircleLine,
+  RiStopCircleLine,
+  RiTimerLine,
+  RiExternalLinkLine
 } from 'react-icons/ri'
 
 // ---- Types ----
@@ -116,12 +120,15 @@ interface Settings {
   industry: string
   company: string
   website: string
+  linkedinUrl: string
   skills: string[]
   openTo: string[]
   tone: 'Professional' | 'Casual'
   maxReplyLength: number
   autoReplyCategories: string[]
   flagCategories: string[]
+  autoScanEnabled: boolean
+  autoScanInterval: number // minutes
 }
 
 type PageType = 'dashboard' | 'review' | 'history' | 'settings'
@@ -148,17 +155,20 @@ const AGENT_DRAFT_ID = '69996017c066ed107671abdc'
 const ALL_CATEGORIES = ['greeting', 'job_offer', 'collaboration', 'sales_pitch', 'spam', 'follow_up', 'general', 'sensitive', 'urgent']
 
 const DEFAULT_SETTINGS: Settings = {
-  name: '',
+  name: 'Shruti Keshri',
   title: '',
-  industry: '',
+  industry: 'Technology',
   company: '',
   website: '',
+  linkedinUrl: 'https://www.linkedin.com/in/shrutikeshri/',
   skills: [],
-  openTo: [],
+  openTo: ['Networking'],
   tone: 'Professional',
   maxReplyLength: 150,
   autoReplyCategories: ['greeting', 'follow_up', 'general'],
   flagCategories: ['spam', 'sensitive', 'urgent', 'job_offer', 'collaboration', 'sales_pitch'],
+  autoScanEnabled: false,
+  autoScanInterval: 5,
 }
 
 const OPEN_TO_OPTIONS = ['Networking', 'Freelance', 'Job Offers', 'Partnerships']
@@ -771,6 +781,13 @@ function DashboardScreen({
   onDismissStatus,
   sampleMode,
   connectionStatus,
+  autoScanEnabled,
+  autoScanCountdown,
+  onToggleAutoScan,
+  lastScanTime,
+  scanCount,
+  linkedinUrl,
+  settings,
 }: {
   stats: Stats
   activityFeed: ActivityItem[]
@@ -780,9 +797,22 @@ function DashboardScreen({
   onDismissStatus: () => void
   sampleMode: boolean
   connectionStatus: ConnectionStatus
+  autoScanEnabled: boolean
+  autoScanCountdown: number
+  onToggleAutoScan: (enabled: boolean) => void
+  lastScanTime: Date | null
+  scanCount: number
+  linkedinUrl: string
+  settings: Settings
 }) {
   const displayStats = sampleMode ? { totalMessages: 47, autoReplied: 32, flagged: 8, pending: 7 } : stats
   const displayFeed = sampleMode ? SAMPLE_ACTIVITY : activityFeed
+
+  const formatCountdown = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
 
   return (
     <div className="space-y-6">
@@ -790,24 +820,91 @@ function DashboardScreen({
         <StatusBanner message={statusMessage.message} type={statusMessage.type} onDismiss={onDismissStatus} />
       )}
 
-      <div className="flex items-center justify-between">
+      {/* LinkedIn Profile Card */}
+      {linkedinUrl && (
+        <GlassCard className="p-4">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-[#0A66C2]/10 flex items-center justify-center flex-shrink-0">
+              <RiLinkedinBoxFill className="w-6 h-6 text-[#0A66C2]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-foreground">{settings.name || 'LinkedIn User'}</p>
+                {settings.title && <span className="text-xs text-muted-foreground">-- {settings.title}</span>}
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <RiLink className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                <a
+                  href={linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[#0A66C2] hover:underline truncate"
+                >
+                  {linkedinUrl}
+                </a>
+                <RiExternalLinkLine className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-emerald-500' : connectionStatus === 'disconnected' ? 'bg-red-500' : 'bg-amber-400 animate-pulse'}`} />
+              <span className={`text-xs font-medium ${connectionStatus === 'connected' ? 'text-emerald-600' : connectionStatus === 'disconnected' ? 'text-red-600' : 'text-amber-600'}`}>
+                {connectionStatus === 'connected' ? 'Live' : connectionStatus === 'disconnected' ? 'Offline' : 'Checking'}
+              </span>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold text-foreground font-sans">Dashboard</h2>
-          <p className="text-sm text-muted-foreground mt-1">Monitor your LinkedIn inbox automation</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Real-time LinkedIn inbox automation
+            {lastScanTime && (
+              <span className="ml-2 text-xs">
+                -- Last scan: {lastScanTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {scanCount > 0 && ` (${scanCount} scans this session)`}
+              </span>
+            )}
+          </p>
         </div>
-        <Button onClick={onScanAndReply} disabled={isScanning} className="px-6 py-2.5 font-medium shadow-sm">
-          {isScanning ? (
-            <>
-              <RiLoader4Line className="w-4 h-4 mr-2 animate-spin" />
-              Scanning...
-            </>
-          ) : (
-            <>
-              <RiRadarLine className="w-4 h-4 mr-2" />
-              Scan & Reply
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-3">
+          {/* Auto-Scan Toggle */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all ${autoScanEnabled ? 'bg-emerald-50 border-emerald-200' : 'bg-secondary border-border'}`}>
+            {autoScanEnabled ? (
+              <RiPlayCircleLine className="w-4 h-4 text-emerald-600" />
+            ) : (
+              <RiStopCircleLine className="w-4 h-4 text-muted-foreground" />
+            )}
+            <span className={`text-xs font-medium ${autoScanEnabled ? 'text-emerald-700' : 'text-muted-foreground'}`}>
+              {autoScanEnabled ? 'Auto-Scan ON' : 'Auto-Scan OFF'}
+            </span>
+            {autoScanEnabled && autoScanCountdown > 0 && (
+              <span className="text-[10px] font-mono text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
+                {formatCountdown(autoScanCountdown)}
+              </span>
+            )}
+            <Switch
+              checked={autoScanEnabled}
+              onCheckedChange={onToggleAutoScan}
+              className="scale-75"
+            />
+          </div>
+
+          <Button onClick={onScanAndReply} disabled={isScanning} className="px-6 py-2.5 font-medium shadow-sm">
+            {isScanning ? (
+              <>
+                <RiLoader4Line className="w-4 h-4 mr-2 animate-spin" />
+                Scanning...
+              </>
+            ) : (
+              <>
+                <RiRadarLine className="w-4 h-4 mr-2" />
+                Scan & Reply
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1388,6 +1485,28 @@ function SettingsScreen({
             </div>
           </div>
           <div className="space-y-1.5">
+            <Label htmlFor="linkedinUrl" className="text-xs font-medium flex items-center gap-1.5">
+              <RiLinkedinBoxFill className="w-3.5 h-3.5 text-[#0A66C2]" />
+              LinkedIn Profile URL
+            </Label>
+            <Input
+              id="linkedinUrl"
+              placeholder="https://www.linkedin.com/in/yourprofile/"
+              value={settings.linkedinUrl}
+              onChange={(e) => onUpdateSettings({ linkedinUrl: e.target.value })}
+              className="rounded-xl"
+            />
+            {settings.linkedinUrl && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                <span className="text-[10px] text-emerald-600">Profile linked</span>
+                <a href={settings.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-[#0A66C2] hover:underline ml-auto flex items-center gap-0.5">
+                  View Profile <RiExternalLinkLine className="w-2.5 h-2.5" />
+                </a>
+              </div>
+            )}
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="website" className="text-xs">Website</Label>
             <Input id="website" placeholder="https://yourwebsite.com" value={settings.website} onChange={(e) => onUpdateSettings({ website: e.target.value })} className="rounded-xl" />
           </div>
@@ -1483,6 +1602,69 @@ function SettingsScreen({
               ))}
             </div>
           </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard className="overflow-hidden">
+        <div className="px-5 py-4 border-b border-border/50">
+          <div className="flex items-center gap-2">
+            <RiTimerLine className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold text-sm text-foreground">Auto-Scan Settings</h3>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">Configure automatic real-time inbox monitoring</p>
+        </div>
+        <div className="p-5 space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm font-medium">Enable Auto-Scan</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Automatically scan inbox at regular intervals</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {settings.autoScanEnabled ? (
+                <RiPlayCircleLine className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <RiStopCircleLine className="w-4 h-4 text-muted-foreground" />
+              )}
+              <Switch
+                checked={settings.autoScanEnabled}
+                onCheckedChange={(checked) => onUpdateSettings({ autoScanEnabled: checked })}
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <Label className="text-sm font-medium">Scan Interval</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">How often to check for new messages</p>
+              </div>
+              <span className="text-sm font-medium text-primary">{settings.autoScanInterval} min</span>
+            </div>
+            <Slider
+              value={[settings.autoScanInterval]}
+              onValueChange={([val]) => onUpdateSettings({ autoScanInterval: val })}
+              min={1}
+              max={30}
+              step={1}
+              className="w-full"
+              disabled={!settings.autoScanEnabled}
+            />
+            <div className="flex justify-between mt-1">
+              <span className="text-[10px] text-muted-foreground">1 min</span>
+              <span className="text-[10px] text-muted-foreground">30 min</span>
+            </div>
+          </div>
+
+          {settings.autoScanEnabled && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200">
+              <RiPlayCircleLine className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <span className="text-xs text-emerald-700">
+                Auto-scan active: scanning every {settings.autoScanInterval} minute{settings.autoScanInterval > 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
         </div>
       </GlassCard>
 
@@ -1606,6 +1788,53 @@ export default function Page() {
   // Real-time LinkedIn connection monitoring
   const { connectionState, manualReconnect } = useLinkedInConnection()
 
+  // Auto-scan interval for continuous real-time monitoring
+  const autoScanRef = useRef<NodeJS.Timeout | null>(null)
+  const isScanningRef = useRef(false)
+  const [autoScanCountdown, setAutoScanCountdown] = useState<number>(0)
+  const [lastScanTime, setLastScanTime] = useState<Date | null>(null)
+  const [scanCount, setScanCount] = useState(0)
+
+  // Keep scanning ref in sync
+  useEffect(() => {
+    isScanningRef.current = isScanning
+  }, [isScanning])
+
+  // Auto-scan timer effect
+  useEffect(() => {
+    if (autoScanRef.current) {
+      clearInterval(autoScanRef.current)
+      autoScanRef.current = null
+    }
+
+    if (!settings.autoScanEnabled || settings.autoScanInterval < 1) {
+      setAutoScanCountdown(0)
+      return
+    }
+
+    const intervalMs = settings.autoScanInterval * 60 * 1000
+    let nextScanTime = Date.now() + intervalMs
+
+    // Update countdown every second
+    const countdownInterval = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((nextScanTime - Date.now()) / 1000))
+      setAutoScanCountdown(remaining)
+
+      if (remaining <= 0 && !isScanningRef.current) {
+        nextScanTime = Date.now() + intervalMs
+        handleScanAndReply()
+      }
+    }, 1000)
+
+    autoScanRef.current = countdownInterval
+
+    return () => {
+      if (autoScanRef.current) {
+        clearInterval(autoScanRef.current)
+      }
+    }
+  }, [settings.autoScanEnabled, settings.autoScanInterval, handleScanAndReply])
+
   // Load settings from localStorage on mount
   useEffect(() => {
     try {
@@ -1655,6 +1884,8 @@ Name: ${settings.name || 'User'}
 Title: ${settings.title || 'Professional'}
 Industry: ${settings.industry || 'Technology'}
 Company: ${settings.company || 'My Company'}
+LinkedIn Profile: ${settings.linkedinUrl || 'Not provided'}
+Website: ${settings.website || 'Not provided'}
 Skills: ${settings.skills.length > 0 ? settings.skills.join(', ') : 'General'}
 Open To: ${settings.openTo.length > 0 ? settings.openTo.join(', ') : 'Networking'}
 
@@ -1664,7 +1895,7 @@ Max Length: ${settings.maxReplyLength} words
 Auto-reply categories: ${settings.autoReplyCategories.join(', ')}
 Flag categories: ${settings.flagCategories.join(', ')}
 
-Please scan my LinkedIn inbox, categorize all unread messages, auto-reply to safe categories, and flag sensitive/spam messages for my review.
+IMPORTANT: This is a REAL-TIME scan request. Connect to my LinkedIn account at ${settings.linkedinUrl || 'my LinkedIn profile'}, fetch all unread messages from my inbox, categorize each one, auto-reply to safe categories matching my tone preference, and flag sensitive/spam messages for my review. Process actual messages, not simulated ones.
 `
       const result = await callAIAgent(message, AGENT_SCAN_ID)
       if (result.success && result?.response?.result) {
@@ -1704,6 +1935,8 @@ Please scan my LinkedIn inbox, categorize all unread messages, auto-reply to saf
     } finally {
       setIsScanning(false)
       setActiveAgentId(null)
+      setLastScanTime(new Date())
+      setScanCount((prev) => prev + 1)
     }
   }, [settings])
 
@@ -1719,6 +1952,7 @@ Name: ${settings.name || 'User'}
 Title: ${settings.title || 'Professional'}
 Industry: ${settings.industry || 'Technology'}
 Company: ${settings.company || 'My Company'}
+LinkedIn Profile: ${settings.linkedinUrl || 'Not provided'}
 
 Flagged Message:
 From: ${flaggedMsg.sender_name} (${flaggedMsg.sender_title})
@@ -1727,7 +1961,7 @@ Flag Reason: ${flaggedMsg.flag_reason}
 Priority: ${flaggedMsg.priority}
 Message: ${flaggedMsg.original_message}
 
-Please generate a suggested reply for this flagged LinkedIn message. Tone preference: ${settings.tone}
+Please generate a suggested reply for this flagged LinkedIn message. This is a real message from my LinkedIn inbox. Tone preference: ${settings.tone}. Draft a response that sounds authentically like me based on my profile context.
 `
       const result = await callAIAgent(message, AGENT_DRAFT_ID)
       if (result.success && result?.response?.result) {
@@ -1823,6 +2057,13 @@ Please generate a suggested reply for this flagged LinkedIn message. Tone prefer
             onDismissStatus={dismissStatus}
             sampleMode={sampleMode}
             connectionStatus={connectionState.status}
+            autoScanEnabled={settings.autoScanEnabled}
+            autoScanCountdown={autoScanCountdown}
+            onToggleAutoScan={(enabled) => updateSettings({ autoScanEnabled: enabled })}
+            lastScanTime={lastScanTime}
+            scanCount={scanCount}
+            linkedinUrl={settings.linkedinUrl}
+            settings={settings}
           />
         )
       case 'review':

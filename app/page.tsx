@@ -1791,6 +1791,7 @@ export default function Page() {
   // Auto-scan interval for continuous real-time monitoring
   const autoScanRef = useRef<NodeJS.Timeout | null>(null)
   const isScanningRef = useRef(false)
+  const scanHandlerRef = useRef<(() => void) | null>(null)
   const [autoScanCountdown, setAutoScanCountdown] = useState<number>(0)
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null)
   const [scanCount, setScanCount] = useState(0)
@@ -1799,41 +1800,6 @@ export default function Page() {
   useEffect(() => {
     isScanningRef.current = isScanning
   }, [isScanning])
-
-  // Auto-scan timer effect
-  useEffect(() => {
-    if (autoScanRef.current) {
-      clearInterval(autoScanRef.current)
-      autoScanRef.current = null
-    }
-
-    if (!settings.autoScanEnabled || settings.autoScanInterval < 1) {
-      setAutoScanCountdown(0)
-      return
-    }
-
-    const intervalMs = settings.autoScanInterval * 60 * 1000
-    let nextScanTime = Date.now() + intervalMs
-
-    // Update countdown every second
-    const countdownInterval = setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((nextScanTime - Date.now()) / 1000))
-      setAutoScanCountdown(remaining)
-
-      if (remaining <= 0 && !isScanningRef.current) {
-        nextScanTime = Date.now() + intervalMs
-        handleScanAndReply()
-      }
-    }, 1000)
-
-    autoScanRef.current = countdownInterval
-
-    return () => {
-      if (autoScanRef.current) {
-        clearInterval(autoScanRef.current)
-      }
-    }
-  }, [settings.autoScanEnabled, settings.autoScanInterval, handleScanAndReply])
 
   // Load settings from localStorage on mount
   useEffect(() => {
@@ -1939,6 +1905,45 @@ IMPORTANT: This is a REAL-TIME scan request. Connect to my LinkedIn account at $
       setScanCount((prev) => prev + 1)
     }
   }, [settings])
+
+  // Keep scan handler ref in sync (must be after handleScanAndReply is defined)
+  useEffect(() => {
+    scanHandlerRef.current = handleScanAndReply
+  }, [handleScanAndReply])
+
+  // Auto-scan timer effect (uses ref to avoid TDZ issues)
+  useEffect(() => {
+    if (autoScanRef.current) {
+      clearInterval(autoScanRef.current)
+      autoScanRef.current = null
+    }
+
+    if (!settings.autoScanEnabled || settings.autoScanInterval < 1) {
+      setAutoScanCountdown(0)
+      return
+    }
+
+    const intervalMs = settings.autoScanInterval * 60 * 1000
+    let nextScanTime = Date.now() + intervalMs
+
+    const countdownInterval = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((nextScanTime - Date.now()) / 1000))
+      setAutoScanCountdown(remaining)
+
+      if (remaining <= 0 && !isScanningRef.current) {
+        nextScanTime = Date.now() + intervalMs
+        scanHandlerRef.current?.()
+      }
+    }, 1000)
+
+    autoScanRef.current = countdownInterval
+
+    return () => {
+      if (autoScanRef.current) {
+        clearInterval(autoScanRef.current)
+      }
+    }
+  }, [settings.autoScanEnabled, settings.autoScanInterval])
 
   const handleDraftResponse = useCallback(async (flaggedMsg: FlaggedMessage) => {
     setIsDrafting(true)
